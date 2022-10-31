@@ -36,21 +36,16 @@ def main(args: argparse.Namespace) -> None:
     with open(args.config, "r") as f_json:
         config = json.loads(f_json.read())
 
-    model_config = config["model_config"]
-    optim_config = config["optim_config"]
-    optim_config["epochs"] = config["num_epochs"]
+
     track = config["track"]
     assert track in ["LA", "PA", "DF", "toy_example"], "Invalid track given"
-    if "eval_all_best" not in config:
-        config["eval_all_best"] = "True"
-    if "freq_aug" not in config:
-        config["freq_aug"] = "False"
+
     
     # define database related paths
     output_dir = Path(args.output_dir)
     prefix_2019 = "ASVspoof2019.{}".format(track)
     database_path = Path(config["database_path"])
-    eval_db_path = Path(config["eval_database_path"])
+    eval_database_path = Path(config["eval_database_path"])
 
     if track == "toy_example":
         eval_trial_path = (database_path / "cm_protocols/eval.txt")
@@ -60,22 +55,11 @@ def main(args: argparse.Namespace) -> None:
         "ASVspoof2019_{}_cm_protocols/{}.cm.eval.trl.txt".format(
             track, prefix_2019))
 
-    # load attack configure
-    with open(args.attack_config, "r") as f_json:
-        attack_config = json.loads(f_json.read())
-
     # define model related paths
-    model_tag = "{}_{}_{}".format(
-        track,
-        config["model_name"],
-        attack_config["attack_type"])
-    if args.comment:
-        model_tag = model_tag + "_{}".format(args.comment)
-    
+    model_tag = config["model_tag"]
     model_tag = output_dir / model_tag
     
     # model_save_path = model_tag / "pretained_weights"
-    eval_score_path = model_tag / config["eval_output"]
     writer = SummaryWriter(model_tag)
     os.makedirs(model_tag, exist_ok=True)
     copy(args.config, model_tag / "config.conf")
@@ -89,25 +73,18 @@ def main(args: argparse.Namespace) -> None:
     if device == "cpu":
         raise ValueError("GPU not detected!")
 
-    # define model architecture
-    model = get_model(model_config, device)
-
-
-    # attack with the pretrained model
-    checkpoint = torch.load(config["model_path"], map_location=device)
-    model.load_state_dict(checkpoint)
-    print("Model loaded : {}".format(config["model_path"]))
-
     # case 1: eval 
     if args.eval:
         # load the new data first
-        print('reading from {}'.format(database_path))
-        adv_loader = get_adv_loader(database_path, config, eval=False)
+        print('reading from {}'.format(eval_database_path))
+
+        model = get_pretrained_models(config["blackbox_model"], device)[0]
+
+        adv_loader = get_adv_loader(eval_database_path, config, eval=True)
 
         print("Start evaluation...")
-        adv_path = os.path.join(eval_db_path, 'eval')
-        attack_evaluation(adv_loader, model, device, adv_path)
-        # attack(adv, None, model,  adv_path, device)
+        adv_path = os.path.join(eval_database_path, 'eval')
+        attack_evaluation(adv_loader, model, device)
 
         print("DONE.")
 
@@ -115,7 +92,14 @@ def main(args: argparse.Namespace) -> None:
         # exit after evaluation
 
     # case 2: attack
-    # get attack 
+
+    # load model
+    model = get_pretrained_models(config["whitebox_models"], device)
+
+    # load attack configure
+    with open(config["attack_config"], "r") as f_json:
+        attack_config = json.loads(f_json.read())
+
     attack_model = get_attack_model(attack_config, model)
 
     # define dataloaders
@@ -123,13 +107,27 @@ def main(args: argparse.Namespace) -> None:
         database_path, config, eval=False)
 
     print("Start attacks...")
-    attack(eval_loader, attack_model, model,  adv_path, device)
-
-
-    # start to evaluate the attack
+    attack(eval_loader, attack_model,  adv_path, device)
 
     return 0 # now we first make it run
 
+
+def get_pretrained_models(model_config_path, device):
+    models = []    
+    for m in model_config_path:
+        with open(m, "r") as f_json:
+            config = json.loads(f_json.read())
+            # model_configs.append(config)
+
+        model = get_model(config["model_config"], device)
+
+        checkpoint = torch.load(config["model_path"], map_location=device)
+        model.load_state_dict(checkpoint)
+        print("Model loaded : {}".format(config["model_path"]))
+
+        models.append(model)
+
+    return models
 
 
 def get_attack_model(attack_config, model):
@@ -140,7 +138,7 @@ def get_attack_model(attack_config, model):
 
 
 # we only care about the success rate
-def attack_evaluation(data_loader: DataLoader, model, device, adver_dir):
+def attack_evaluation(data_loader: DataLoader, model, device):
 
     model.eval()
 
@@ -167,7 +165,7 @@ def attack_evaluation(data_loader: DataLoader, model, device, adver_dir):
     print("Success Rate is ", success_rate)
 
 
-def attack(data_loader: DataLoader, attack_model, model, adver_dir, device: torch.device):
+def attack(data_loader: DataLoader, attack_model, adver_dir, device: torch.device):
     
     flac_path = os.path.join(adver_dir, 'flac')
     os.makedirs(flac_path, exist_ok=True)
@@ -175,11 +173,6 @@ def attack(data_loader: DataLoader, attack_model, model, adver_dir, device: torc
     # note the dir shoule be something like 
     # attack_result/toy_example_aasist_attack_ep100_bs24/adv_audio/flac
 
-    correct = 0
-    ori_correct = 0
-    total_len = 0
-
-    model.eval()
     torch.backends.cudnn.enabled = False
 
     for index, (origin, label, utt_id) in enumerate(data_loader):
@@ -192,34 +185,8 @@ def attack(data_loader: DataLoader, attack_model, model, adver_dir, device: torc
         if os.path.exists(des_path):
             print('*' * 40, index, utt_id[0], 'Exists, SKip', '*' * 40)
         
-        # print('id size', len(utt_id)) # utt id list of batch size
-        # print('origin size', origin.size()) # batch_size * data_size 
-        # print('label size', label.size()) # batch_size
-        
-        _, ori_out = model(origin)
-        model.zero_grad()
-
         adver_audio = attack_model.attack(origin, label)
         adver_audio = adver_audio.clone()
-
-        _, output = model(adver_audio)
-        model.zero_grad()
-
-        print(adver_audio - origin)
-
-        # print(output)
- 
-        final_pred = output.argmax(1, keepdim=True).view(-1) # get the index of the max log-probability
-        ori_pred = ori_out.argmax(1, keepdim=True).view(-1)
-        # print(final_pred)
-
-        # print("label", label)
-        # print(final_pred)
-        # print(ori_pred)
-        
-        correct += ((final_pred == label).sum())
-        ori_correct += ((ori_pred == label).sum())
-        total_len += label.size()[0]
 
         for adv, id in zip(adver_audio, utt_id):
             fs = 16000 # sampling rate of LA is 16k
@@ -227,15 +194,11 @@ def attack(data_loader: DataLoader, attack_model, model, adver_dir, device: torc
             adv = adv.cpu().detach()
             #sf.write(adv_path, adv, samplerate=fs)
 
-            torch.save(adv, adv_path)    
+            torch.save(adv, adv_path)
 
         print('All adversarial audio in the batch are saved!')
 
 
-    success_rate = correct / float(total_len)
-    ori_sr = ori_correct / float(total_len)
-    print("Success rate ", success_rate)
-    print("Origin Success Rate ", ori_sr)
 
 def get_adv_loader(
         database_path: str,
@@ -287,9 +250,6 @@ if __name__ == "__main__":
                         type=str,
                         help="configuration file",
                         required=True)
-    parser.add_argument("--attack_config",
-                        dest="attack_config",
-                        type=str)
     parser.add_argument(
         "--output_dir",
         dest="output_dir",

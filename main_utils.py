@@ -15,14 +15,17 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
+from sklearn import metrics
+import numpy as np
+
 
 from utils import create_optimizer, seed_worker, set_seed, str_to_bool
 
 
-
-
 def get_model(model_config: Dict, device: torch.device):
     """Define DNN model architecture"""
+    
+    print("Model arch is:", model_config["architecture"])
     module = import_module("models.{}".format(model_config["architecture"]))
     _model = getattr(module, "Model")
     model = _model(model_config).to(device)
@@ -74,7 +77,6 @@ def train_epoch(
     model,
     optim: Union[torch.optim.SGD, torch.optim.Adam],
     device: torch.device,
-    scheduler: torch.optim.lr_scheduler,
     config: argparse.Namespace):
     """Train the model for one epoch"""
     running_loss = 0
@@ -83,7 +85,6 @@ def train_epoch(
     model.train()
 
     # set objective (Loss) functions
-
     
     weight = torch.FloatTensor([0.1, 0.9]).to(device)
     criterion = nn.CrossEntropyLoss(weight=weight)
@@ -103,14 +104,39 @@ def train_epoch(
         batch_loss.backward()
         optim.step()
 
-        if config["optim_config"]["scheduler"] in ["cosine", "keras_decay"]:
-            scheduler.step()
-        elif scheduler is None:
-            pass
-        else:
-            raise ValueError("scheduler error, got:{}".format(scheduler))
-
     running_loss /= num_total
     return running_loss
 
 
+# evaluate the development set, and returns the equal error rate 
+def dev_epoch(dev_loader: DataLoader, model, device: torch.device):
+
+    model.eval()
+        
+    # weight = torch.FloatTensor([0.1, 0.9]).to(device)
+    # criterion = nn.CrossEntropyLoss(weight=weight)
+
+    score_list = []
+    label_list = []
+
+    for batch_x, batch_y in dev_loader:
+
+        batch_x = batch_x.to(device)
+        _, batch_out = model(batch_x, None)
+        batch_score = (batch_out[:, 1]).data.cpu().numpy().ravel()
+
+        score_list.extend(batch_score)
+        label_list.extend(batch_y.numpy().ravel())
+
+    return compute_eer(np.array(label_list), np.array(score_list))
+
+
+def compute_eer(y, y_score):
+    fpr, tpr, thresholds = metrics.roc_curve(y, y_score, pos_label=1)
+    fnr = 1 - tpr
+
+    t = np.nanargmin(np.abs(fnr-fpr))
+    eer_low, eer_high = min(fnr[t],fpr[t]), max(fnr[t],fpr[t])
+    eer = (eer_low+eer_high)*0.5
+
+    return eer

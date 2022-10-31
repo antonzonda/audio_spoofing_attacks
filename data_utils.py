@@ -68,14 +68,30 @@ class Dataset_ASVspoof2019_train(Dataset):
         self.base_dir = base_dir
         self.cut = 64600  # take ~4 sec audio (64600 samples)
 
+        # load the whole training set into memory
+        self.x_list = []
+        
+        for key in self.list_IDs:
+
+            X, _ = sf.read(str(self.base_dir / f"flac/{key}.flac"))
+            X_pad = pad_random(X, self.cut)
+            x_inp = Tensor(X_pad)
+            # y = self.labels[key]
+
+            self.x_list.append(x_inp)
+
+
     def __len__(self):
         return len(self.list_IDs)
 
     def __getitem__(self, index):
+        # key = self.list_IDs[index]
+        # X, _ = sf.read(str(self.base_dir / f"flac/{key}.flac"))
+        # X_pad = pad_random(X, self.cut)
+        # x_inp = Tensor(X_pad)
+
+        x_inp = self.x_list[index]
         key = self.list_IDs[index]
-        X, _ = sf.read(str(self.base_dir / f"flac/{key}.flac"))
-        X_pad = pad_random(X, self.cut)
-        x_inp = Tensor(X_pad)
         y = self.labels[key]
         return x_inp, y
 
@@ -88,15 +104,28 @@ class Dataset_ASVspoof2019_devNeval(Dataset):
         self.base_dir = base_dir
         self.cut = 64600  # take ~4 sec audio (64600 samples)
 
+        self.x_list = []
+        
+        for key in list_IDs:
+            # key = self.list_IDs[index]
+            X, _ = sf.read(str(self.base_dir / f"flac/{key}.flac"))
+            X_pad = pad(X, self.cut)
+            x_inp = Tensor(X_pad)
+            self.x_list.append(x_inp)
+
     def __len__(self):
         return len(self.list_IDs)
 
     def __getitem__(self, index):
+        # key = self.list_IDs[index]
+        # X, _ = sf.read(str(self.base_dir / f"flac/{key}.flac"))
+        # X_pad = pad(X, self.cut)
+        # x_inp = Tensor(X_pad)
         key = self.list_IDs[index]
-        X, _ = sf.read(str(self.base_dir / f"flac/{key}.flac"))
-        X_pad = pad(X, self.cut)
-        x_inp = Tensor(X_pad)
+        x_inp = self.x_list[index]
+
         return x_inp, key
+
 
 
 class Dataset_ASVspoof2019_attack(Dataset):
