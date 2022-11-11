@@ -3,13 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 import numpy as np
-import math
 from torch.utils import data
 from collections import OrderedDict
 from torch.nn.parameter import Parameter
-from torch.autograd import Variable
-import pickle
-import random
+
+
+___author__ = "Hemlata Tak"
+__email__ = "tak@eurecom.fr"
 
 
 class SincConv(nn.Module):
@@ -22,18 +22,17 @@ class SincConv(nn.Module):
         return 700 * (10 ** (mel / 2595) - 1)
 
 
-    def __init__(self, out_channels, kernel_size,in_channels=1,sample_rate=16000,
-                 stride=1, padding=0, dilation=1, bias=False, groups=1,freq_scale='Mel'):
+    def __init__(self, device,out_channels, kernel_size,in_channels=1,sample_rate=16000,
+                 stride=1, padding=0, dilation=1, bias=False, groups=1):
 
         super(SincConv,self).__init__()
-
 
         if in_channels != 1:
             
             msg = "SincConv only support one input channel (here, in_channels = {%i})" % (in_channels)
             raise ValueError(msg)
         
-        self.out_channels = out_channels+1
+        self.out_channels = out_channels
         self.kernel_size = kernel_size
         self.sample_rate=sample_rate
 
@@ -41,7 +40,7 @@ class SincConv(nn.Module):
         if kernel_size%2==0:
             self.kernel_size=self.kernel_size+1
 
-        # self.device=device   
+        self.device=device   
         self.stride = stride
         self.padding = padding
         self.dilation = dilation
@@ -55,50 +54,30 @@ class SincConv(nn.Module):
         # initialize filterbanks using Mel scale
         NFFT = 512
         f=int(self.sample_rate/2)*np.linspace(0,1,int(NFFT/2)+1)
-
-
-        if freq_scale == 'Mel':
-            fmel=self.to_mel(f) # Hz to mel conversion
-            fmelmax=np.max(fmel)
-            fmelmin=np.min(fmel)
-            filbandwidthsmel=np.linspace(fmelmin,fmelmax,self.out_channels+2)
-            filbandwidthsf=self.to_hz(filbandwidthsmel) # Mel to Hz conversion
-            self.freq=filbandwidthsf[:self.out_channels]
-
-        elif freq_scale == 'Inverse-mel':
-            fmel=self.to_mel(f) # Hz to mel conversion
-            fmelmax=np.max(fmel)
-            fmelmin=np.min(fmel)
-            filbandwidthsmel=np.linspace(fmelmin,fmelmax,self.out_channels+2)
-            filbandwidthsf=self.to_hz(filbandwidthsmel) # Mel to Hz conversion
-            self.mel=filbandwidthsf[:self.out_channels]
-            self.freq=np.abs(np.flip(self.mel)-1) ## invert mel scale
-
-        
-        else:
-            fmelmax=np.max(f)
-            fmelmin=np.min(f)
-            filbandwidthsmel=np.linspace(fmelmin,fmelmax,self.out_channels+2)
-            self.freq=filbandwidthsmel[:self.out_channels]
-        
+        fmel=self.to_mel(f)   # Hz to mel conversion
+        fmelmax=np.max(fmel)
+        fmelmin=np.min(fmel)
+        filbandwidthsmel=np.linspace(fmelmin,fmelmax,self.out_channels+1)
+        filbandwidthsf=self.to_hz(filbandwidthsmel)  # Mel to Hz conversion
+        self.mel=filbandwidthsf
         self.hsupp=torch.arange(-(self.kernel_size-1)/2, (self.kernel_size-1)/2+1)
-        self.band_pass=torch.zeros(self.out_channels-1,self.kernel_size)
+        self.band_pass=torch.zeros(self.out_channels,self.kernel_size)
     
        
         
     def forward(self,x):
-        for i in range(len(self.freq)-1):
-            fmin=self.freq[i]
-            fmax=self.freq[i+1]
+        for i in range(len(self.mel)-1):
+            fmin=self.mel[i]
+            fmax=self.mel[i+1]
             hHigh=(2*fmax/self.sample_rate)*np.sinc(2*fmax*self.hsupp/self.sample_rate)
             hLow=(2*fmin/self.sample_rate)*np.sinc(2*fmin*self.hsupp/self.sample_rate)
             hideal=hHigh-hLow
             
             self.band_pass[i,:]=Tensor(np.hamming(self.kernel_size))*Tensor(hideal)
         
-        band_pass_filter=self.band_pass.to(x.device)
+        band_pass_filter=self.band_pass.to(self.device)
 
-        self.filters = (band_pass_filter).view(self.out_channels-1, 1, self.kernel_size)
+        self.filters = (band_pass_filter).view(self.out_channels, 1, self.kernel_size)
         
         return F.conv1d(x, self.filters, stride=self.stride,
                         padding=self.padding, dilation=self.dilation,
@@ -149,7 +128,7 @@ class Residual_block(nn.Module):
         else:
             out = x
             
-        out = self.conv1(out)
+        out = self.conv1(x)
         out = self.bn2(out)
         out = self.lrelu(out)
         out = self.conv2(out)
@@ -162,20 +141,16 @@ class Residual_block(nn.Module):
         return out
 
 
-
-
-
 class Model(nn.Module):
     def __init__(self, d_args):
         super(Model, self).__init__()
 
-        
-        # self.device=device
+        self.device='cuda'
 
-        self.Sinc_conv=SincConv(
-			out_channels = d_args['filts'][0],
-			kernel_size = d_args['first_conv'],
-                        in_channels = d_args['in_channels'],freq_scale='Mel'
+        self.Sinc_conv=SincConv(device=self.device,
+            out_channels = d_args['filts'][0],
+            kernel_size = d_args['first_conv'],
+                        in_channels = d_args['in_channels']
         )
         
         self.first_bn = nn.BatchNorm1d(num_features = d_args['filts'][0])
@@ -217,19 +192,19 @@ class Model(nn.Module):
 			
        
         self.sig = nn.Sigmoid()
+        self.logsoftmax = nn.LogSoftmax(dim=1)
         
-        
-    def forward(self, x, Freq_aug=None):
+    def forward(self, x, Freq_aug = None):
         
         
         nb_samp = x.shape[0]
         len_seq = x.shape[1]
         x=x.view(nb_samp,1,len_seq)
         
-        x = self.Sinc_conv(x)    # Fixed sinc filters convolution
+        x = self.Sinc_conv(x)    
         x = F.max_pool1d(torch.abs(x), 3)
         x = self.first_bn(x)
-        x = self.selu(x)
+        x =  self.selu(x)
         
         x0 = self.block0(x)
         y0 = self.avgpool(x0).view(x0.size(0), -1) # torch.Size([batch, filter])
@@ -276,19 +251,10 @@ class Model(nn.Module):
         x = x[:,-1,:]
         x = self.fc1_gru(x)
         x = self.fc2_gru(x)
-
-        # if not is_test:
-        #     output = x
-        #     return output
-
-        # print(x.size())
-
-        output=F.softmax(x,dim=1)
-
-        # print(output.size())
-        return _, output
+        output=self.logsoftmax(x)
       
-       
+        return None, output
+        
         
 
     def _make_attention_fc(self, in_features, l_out_features):
@@ -297,6 +263,8 @@ class Model(nn.Module):
         
         l_fc.append(nn.Linear(in_features = in_features,
 			        out_features = l_out_features))
+
+        
 
         return nn.Sequential(*l_fc)
 

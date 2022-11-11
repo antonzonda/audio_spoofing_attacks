@@ -138,21 +138,42 @@ class Dataset_ASVspoof2019_attack(Dataset):
         self.cut = 64600  # take ~4 sec audio (64600 samples)
         self.eval = eval
 
+        self.x_list = []
+        for key in list_IDs:
+
+            if self.eval:
+
+                # # testing saving tensor object
+
+                x_inp = torch.load(str(self.base_dir / f"flac/{key}.pt"))
+                self.x_list.append(x_inp)
+            else:
+            # if True:
+                X, _ = sf.read(str(self.base_dir / f"flac/{key}.flac"))
+
+                X_pad = pad_random(X, self.cut)
+                X_pad = pad(X, self.cut)
+                x_inp = Tensor(X_pad)
+                self.x_list.append(x_inp)
+
+
     def __len__(self):
         return len(self.list_IDs)
 
     def __getitem__(self, index):
         key = self.list_IDs[index]
-        if self.eval:
-            # X, _ = sf.read(str(self.base_dir / f"flac/{key}.wav"))
-            # testing saving tensor object
+        # if self.eval:
+        #     # X, _ = sf.read(str(self.base_dir / f"flac/{key}.wav"))
+        #     # testing saving tensor object
 
-            x_inp = torch.load(str(self.base_dir / f"flac/{key}.pt"))
-        else:
-            X, _ = sf.read(str(self.base_dir / f"flac/{key}.flac"))
+        #     x_inp = torch.load(str(self.base_dir / f"flac/{key}.pt"))
+        # else:
+        #     X, _ = sf.read(str(self.base_dir / f"flac/{key}.flac"))
 
-            X_pad = pad_random(X, self.cut) #???
-            X_pad = pad(X, self.cut)
-            x_inp = Tensor(X_pad)
+        #     X_pad = pad_random(X, self.cut) #???
+        #     X_pad = pad(X, self.cut)
+        #     x_inp = Tensor(X_pad)
+
+        x_inp = self.x_list[index]
         y = self.labels[key]
         return x_inp, y, key

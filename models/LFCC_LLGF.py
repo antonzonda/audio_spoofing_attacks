@@ -9,45 +9,8 @@ import torch.nn.functional as nn_func
 import sandbox.block_nn as nii_nn
 import torch.nn.functional as F
 
+from sandbox.util_frontend import LFCC
 
-import fairseq
-
-
-class SSLModel():
-    def __init__(self, cp_path, ssl_orig_output_dim):
-        """ SSLModel(cp_path, ssl_orig_output_dim)
-        
-        Args:
-          cp_path: string, path to the pre-trained SSL model
-          ssl_orig_output_dim: int, dimension of the SSL model output feature
-        """
-        model, _, _ = fairseq.checkpoint_utils.load_model_ensemble_and_task([cp_path])
-        self.model = model[0]
-        self.out_dim = ssl_orig_output_dim
-        return
-
-    def extract_feat(self, input_data):
-        """ feature = extract_feat(input_data)
-        Args:
-          input_data: tensor, waveform, (batch, length)
-        
-        Return:
-          feature: tensor, feature, (batch, frame_num, feat_dim)
-        """
-        if next(self.model.parameters()).device != input_data.device \
-           or next(self.model.parameters()).dtype != input_data.dtype:
-            self.model.to(input_data.device, dtype=input_data.dtype)
-            self.model.eval()
-
-        emb = self.model(input_data, mask=False, features_only=True)['x']
-        return emb
-
-# not good way, but the path is fixed
-ssl_path = './models/_w2v/wav2vec_small.pt'
-# This model produces 768 output feature dimensions (per frame)
-ssl_orig_output_dim = 768
-# SSL model is declared as a global var since it is fixed
-g_ssl_model = SSLModel(ssl_path, ssl_orig_output_dim)
 
 
 class Model(nn.Module):
@@ -74,6 +37,8 @@ class Model(nn.Module):
         
         # confidence predictor
         self.m_conf = []
+
+        lfcc_dim = 20 * 3
 
         self.m_transform.append(
             nn.Sequential(
@@ -115,18 +80,17 @@ class Model(nn.Module):
             nn.Dropout(0.7))
         )
 
-        v_feat_dim = 128
 
         self.m_before_pooling.append(
             nn.Sequential(
-                nii_nn.BLSTMLayer((v_feat_dim//16) * 32, (v_feat_dim//16) * 32),
-                nii_nn.BLSTMLayer((v_feat_dim//16) * 32, (v_feat_dim//16) * 32)
+                nii_nn.BLSTMLayer((lfcc_dim//16) * 32, (lfcc_dim//16) * 32),
+                nii_nn.BLSTMLayer((lfcc_dim//16) * 32, (lfcc_dim//16) * 32)
             )
         )
 
-        self.m_output_act.append(nn.Linear((v_feat_dim // 16) * 32, self.v_out_class))
+        self.m_output_act.append(nn.Linear((lfcc_dim // 16) * 32, self.v_out_class))
 
-        self.m_frontend.append(nn.Linear(g_ssl_model.out_dim, v_feat_dim))
+        self.m_frontend.append(LFCC(fl=320, fs=160, fn=512, sr=16000, filter_num=20, with_energy=True))
 
         self.m_frontend = nn.ModuleList(self.m_frontend)
         self.m_transform = nn.ModuleList(self.m_transform)
@@ -134,14 +98,11 @@ class Model(nn.Module):
         self.m_before_pooling = nn.ModuleList(self.m_before_pooling)
         # output 
         
-        self.m_frontend_model = g_ssl_model.extract_feat
-
 
     def forward(self, x, Freq_aug=None):
         batch_size = x.size()[0]
 
         # x size (batch_size, data_length)
-        x = g_ssl_model.extract_feat(x)
 
         # (batch, frame_num, feat_dim)
         x = self.m_frontend[0](x)
@@ -166,7 +127,8 @@ class Model(nn.Module):
 
         m_out = self.m_output_act[0](out_emb)
 
-
         return None, m_out
 
 
+if __name__ == "__main__":
+    m = Model()

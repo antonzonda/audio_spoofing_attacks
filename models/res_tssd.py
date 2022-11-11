@@ -72,9 +72,6 @@ class Model(nn.Module):  # Res-TSSDNet
         x = F.relu(self.fc2(x))
         x = self.out(x)
 
-        output=F.softmax(x,dim=1)
 
-        # print(output.size())
-
-        return None, output
+        return None, x
 

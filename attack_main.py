@@ -12,6 +12,8 @@ from shutil import copy
 from typing import Dict, List, Union
 from scipy.io.wavfile import write
 
+import attacks
+
 import soundfile as sf
 
 
@@ -36,24 +38,15 @@ def main(args: argparse.Namespace) -> None:
     with open(args.config, "r") as f_json:
         config = json.loads(f_json.read())
 
-
-    track = config["track"]
-    assert track in ["LA", "PA", "DF", "toy_example"], "Invalid track given"
-
     
     # define database related paths
     output_dir = Path(args.output_dir)
-    prefix_2019 = "ASVspoof2019.{}".format(track)
+
     database_path = Path(config["database_path"])
     eval_database_path = Path(config["eval_database_path"])
 
-    if track == "toy_example":
-        eval_trial_path = (database_path / "cm_protocols/eval.txt")
-    else:
-        eval_trial_path = (
-        database_path /
-        "ASVspoof2019_{}_cm_protocols/{}.cm.eval.trl.txt".format(
-            track, prefix_2019))
+    # track == "toy_example"
+    eval_trial_path = (database_path / "cm_protocols/eval.txt")
 
     # define model related paths
     model_tag = config["model_tag"]
@@ -61,8 +54,7 @@ def main(args: argparse.Namespace) -> None:
     
     # model_save_path = model_tag / "pretained_weights"
     writer = SummaryWriter(model_tag)
-    os.makedirs(model_tag, exist_ok=True)
-    copy(args.config, model_tag / "config.conf")
+
 
     # define path for adversarial audio
     adv_path =  model_tag / 'eval'
@@ -93,8 +85,19 @@ def main(args: argparse.Namespace) -> None:
 
     # case 2: attack
 
+    os.makedirs(model_tag, exist_ok=True)
+    copy(args.config, model_tag / "config.conf")
+
+    # attack evaluation
+    attack_eval = args.attack_eval
+
     # load model
+
     model = get_pretrained_models(config["whitebox_models"], device)
+
+    blackbox_model = get_pretrained_models(config["blackbox_model"], device)[0] if attack_eval else None
+    if attack_eval:
+        blackbox_model.eval()
 
     # load attack configure
     with open(config["attack_config"], "r") as f_json:
@@ -107,12 +110,15 @@ def main(args: argparse.Namespace) -> None:
         database_path, config, eval=False)
 
     print("Start attacks...")
-    attack(eval_loader, attack_model,  adv_path, device)
+    attack(eval_loader, attack_model, blackbox_model, adv_path, device, attack_eval)
 
     return 0 # now we first make it run
 
 
-def get_pretrained_models(model_config_path, device):
+def get_pretrained_models(model_config_path: list, device):
+    if len(model_config_path) == 0:
+        return [attacks.no_attack.NoAttack]
+
     models = []    
     for m in model_config_path:
         with open(m, "r") as f_json:
@@ -125,6 +131,7 @@ def get_pretrained_models(model_config_path, device):
         model.load_state_dict(checkpoint)
         print("Model loaded : {}".format(config["model_path"]))
 
+        model.eval()
         models.append(model)
 
     return models
@@ -158,14 +165,13 @@ def attack_evaluation(data_loader: DataLoader, model, device):
 
         pred1 = out1.argmax(1, keepdim=True).view(-1) # get the index of the max log-probability
 
-
         correct += ((pred1 == label).sum())
 
-    success_rate = correct / float(total_len)
-    print("Success Rate is ", success_rate)
+    success_rate = (1 - correct / float(total_len))
+    print("Success Rate is ", success_rate * 100)
 
 
-def attack(data_loader: DataLoader, attack_model, adver_dir, device: torch.device):
+def attack(data_loader: DataLoader, attack_model, blackbox_model, adver_dir, device: torch.device, attack_eval: bool):
     
     flac_path = os.path.join(adver_dir, 'flac')
     os.makedirs(flac_path, exist_ok=True)
@@ -174,6 +180,9 @@ def attack(data_loader: DataLoader, attack_model, adver_dir, device: torch.devic
     # attack_result/toy_example_aasist_attack_ep100_bs24/adv_audio/flac
 
     torch.backends.cudnn.enabled = False
+
+    correct = 0
+    total_len = 0
 
     for index, (origin, label, utt_id) in enumerate(data_loader):
         # print(torch.min(origin, dim=1))
@@ -188,17 +197,33 @@ def attack(data_loader: DataLoader, attack_model, adver_dir, device: torch.devic
         adver_audio = attack_model.attack(origin, label)
         adver_audio = adver_audio.clone()
 
-        for adv, id in zip(adver_audio, utt_id):
-            fs = 16000 # sampling rate of LA is 16k
-            adv_path = os.path.join(adver_dir, 'flac', id + '.pt') # test wav
-            adv = adv.cpu().detach()
-            #sf.write(adv_path, adv, samplerate=fs)
+        if attack_eval:
+            total_len += label.size()[0]
+            
+            _, out1 = blackbox_model(adver_audio)
+            pred1 = out1.argmax(1, keepdim=True).view(-1) # get the index of the max log-probability
+            correct += ((pred1 == label).sum())
 
-            torch.save(adv, adv_path)
+            # print(pred1)
+            # print(label)
 
-        print('All adversarial audio in the batch are saved!')
+            print("All the adversarial examples in the batch has been evaluated")
 
+        else: 
 
+            for adv, id in zip(adver_audio, utt_id):
+                fs = 16000 # sampling rate of LA is 16k
+                adv_path = os.path.join(adver_dir, 'flac', id + '.pt') # test wav
+                adv = adv.cpu().detach()
+                #sf.write(adv_path, adv, samplerate=fs)
+
+                torch.save(adv, adv_path)
+
+            print('All adversarial audio in the batch are saved!')
+
+    if attack_eval:
+        success_rate = 1 - correct / float(total_len)
+        print("The success rate is:", success_rate * 100)
 
 def get_adv_loader(
         database_path: str,
@@ -206,23 +231,16 @@ def get_adv_loader(
         eval) -> List[torch.utils.data.DataLoader]:
     """Make PyTorch DataLoaders for train / developement / evaluation"""
 
-    track = config["track"] 
-    prefix_2019 = "ASVspoof2019.{}".format(track)
+    # if track == 'toy_example':
+    print('USING toy_example')
+    eval_database_path = database_path / "eval"
 
-    if track == 'toy_example':
-        print('USING toy_example')
-        eval_database_path = database_path / "eval"
-
-        # eval_trial_path = (database_path / "cm_protocols/eval.txt")
-        eval_trial_path = "dataset/toy_example/cm_protocols/eval.txt"
-
-    else: # track == LA
-
-        eval_database_path = database_path / "ASVspoof2019_{}_eval/".format(track)
-        eval_trial_path = (
-            database_path /
-            "ASVspoof2019_{}_cm_protocols/{}.cm.eval.trl.txt".format(
-                track, prefix_2019))
+    if eval: 
+        eval_trial_path = "dataset/Adver_eval/cm_protocols/eval.txt"
+    else:
+        # pass 
+        eval_trial_path = database_path / "cm_protocols/eval.txt"
+    # eval_trial_path = "dataset/toy_example/cm_protocols/eval.txt"
 
     d_label_eval, file_eval = genSpoof_list(dir_meta=eval_trial_path, is_train=False, is_eval=False)
     
@@ -241,7 +259,6 @@ def get_adv_loader(
                              pin_memory=True)
 
     return eval_loader
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ASVspoof detection system")
@@ -269,5 +286,8 @@ if __name__ == "__main__":
                         type=str,
                         default=None,
                         help="directory to the model weight file (can be also given in the config file)")
-    
+    parser.add_argument(
+        "--attack_eval",
+        action="store_true",
+        help="when this flag is given, attack and evaluate but do not save the audio")
     main(parser.parse_args())
