@@ -79,6 +79,4 @@ class LCNN(nn.Module):
 
         x = self.fc(x)
 
-        x = F.softmax(x, dim=1)
-
         return x

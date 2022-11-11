@@ -603,6 +603,5 @@ class Model(nn.Module):
 
         last_hidden = self.drop(last_hidden)
         output = self.out_layer(last_hidden)
-        output = F.softmax(output, dim=1)
 
         return last_hidden, output

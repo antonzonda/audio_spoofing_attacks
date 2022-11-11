@@ -1,6 +1,6 @@
 This is a project about the transfer attack on ASV spoofing systems.
 It is based on the code by https://github.com/nii-yamagishilab/project-NN-Pytorch-scripts, 
-https://github.com/asvspoof-challenge, and https://github.com/ghuawhu/end-to-end-synthetic-speech-detection.
+https://github.com/asvspoof-challenge, https://github.com/ghuawhu/end-to-end-synthetic-speech-detection, and https://github.com/Harry24k/adversarial-attacks-pytorch. 
 
 
 ## useage: 
