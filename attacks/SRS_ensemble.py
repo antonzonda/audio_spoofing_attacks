@@ -45,7 +45,7 @@ class SRS_ensemble():
         mu = torch.zeros(batch_size, self.num_models).to(self.device)
         sig = torch.ones(batch_size, self.num_models).to(self.device)
 
-        for t in range(self.max_iter):
+        for t in range(1, self.max_iter+1):
             # print(t)
             
             adv_x.requires_grad = True
@@ -62,9 +62,8 @@ class SRS_ensemble():
             f = torch.stack(loss_list, dim=1)
             # print(f.size())
 
-            mu = mu + (f - mu) / self.max_iter
-            sig = sig + ((f - mu)**2 - sig) / self.max_iter
-            
+            mu = mu + (f - mu) / t
+            sig = sig + ((f - mu)**2 - sig) / t
             
             loss = torch.sum((f - mu) / torch.sqrt(sig))
 
