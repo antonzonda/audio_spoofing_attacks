@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 from attacks.loss import get_loss_fn
 
-class MI_FGSM_ensemble():
+class MI_FGSM_ensemble_loss():
     def __init__(self, models, attack_config) -> None:
         
         self.loss_fn = get_loss_fn( attack_config['loss'] )
@@ -15,8 +15,8 @@ class MI_FGSM_ensemble():
         self.num_models = len(models)
 
         self.max_iter = attack_config['max_iter']
-        self.alpha = attack_config['alpha']
-
+        # self.alpha = attack_config['alpha']
+        self.alpha = self.epsilon / self.max_iter
         self.mu = attack_config['decay_factor']
         self.device = "cuda"
 
@@ -37,27 +37,21 @@ class MI_FGSM_ensemble():
             # print(t)
             adv_x.requires_grad = True
 
-            out_list = []
+            loss_list = []
             for model in self.models:
                 model.eval()
                 _, out = model(adv_x)
-                out_list.append(out)
+
+                loss_x = self.loss_fn(out, y)
+                loss_list.append(loss_x)
             
-            # print(out_list[0].size())
-
-            out_mean = torch.mean(torch.stack(out_list), dim=0)
-            # print(out_mean.size())
-
-            loss = self.loss_fn(out_mean, y)
-
-            # print(loss.size())
+            loss = torch.mean( torch.stack(loss_list))
 
             # Calculate gradients of model in backward pass
             
             # Collect datagrad
             data_grad = torch.autograd.grad(loss, adv_x,
                                        retain_graph=False, create_graph=False)[0]
-
 
             g = self.mu * g + nn.functional.normalize(data_grad, p=1)
 

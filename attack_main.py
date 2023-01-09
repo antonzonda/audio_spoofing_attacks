@@ -70,13 +70,13 @@ def main(args: argparse.Namespace) -> None:
         # load the new data first
         print('reading from {}'.format(eval_database_path))
 
-        model = get_pretrained_models(config["blackbox_model"], device)[0]
+        models = get_pretrained_models(config["blackbox_model"], device)
 
         adv_loader = get_adv_loader(eval_database_path, config, eval=True)
 
         print("Start evaluation...")
         adv_path = os.path.join(eval_database_path, 'eval')
-        attack_evaluation(adv_loader, model, device)
+        attack_evaluation(adv_loader, models, device)
 
         print("DONE.")
 
@@ -95,9 +95,10 @@ def main(args: argparse.Namespace) -> None:
 
     model = get_pretrained_models(config["whitebox_models"], device)
 
-    blackbox_model = get_pretrained_models(config["blackbox_model"], device)[0] if attack_eval else None
+    blackbox_models = get_pretrained_models(config["blackbox_model"], device) if attack_eval else None
     if attack_eval:
-        blackbox_model.eval()
+        for blackbox_model in blackbox_models:
+            blackbox_model.eval()
 
     # load attack configure
     with open(config["attack_config"], "r") as f_json:
@@ -110,7 +111,7 @@ def main(args: argparse.Namespace) -> None:
         database_path, config, eval=False)
 
     print("Start attacks...")
-    attack(eval_loader, attack_model, blackbox_model, adv_path, device, attack_eval)
+    attack(eval_loader, attack_model, blackbox_models, adv_path, device, attack_eval)
 
     return 0 # now we first make it run
 
@@ -145,44 +146,59 @@ def get_attack_model(attack_config, model):
 
 
 # we only care about the success rate
-def attack_evaluation(data_loader: DataLoader, model, device):
+def attack_evaluation(data_loader: DataLoader, models, device):
 
-    model.eval()
+    count = 0
 
-    correct = 0
-    total_len = 0
+    for model in models:
 
-    for index, (origin, label, utt_id)  in enumerate(data_loader):
+        model.eval()
+        correct = 0
+        total_len = 0
+        count += 1
 
-        origin = origin.to(device)
-        # print(origin)
-        label = label.view(-1).type(torch.int64).to(device)
-        #print(label)
+        for index, (origin, label, utt_id)  in enumerate(data_loader):
 
-        total_len += label.size()[0]
-        
-        _, out1 = model(origin)
+            origin = origin.to(device)
+            # print(origin)
+            label = label.view(-1).type(torch.int64).to(device)
+            #print(label)
 
-        pred1 = out1.argmax(1, keepdim=True).view(-1) # get the index of the max log-probability
+            total_len += label.size()[0]
+            
+            _, out1 = model(origin)
 
-        correct += ((pred1 == label).sum())
+            pred1 = out1.argmax(1, keepdim=True).view(-1) # get the index of the max log-probability
 
-    success_rate = (1 - correct / float(total_len))
-    print("Success Rate is ", success_rate * 100)
+            correct += ((pred1 == label).sum())
+
+        success_rate = (1 - correct / float(total_len))
+        print("model is: ", count)
+        print("Success Rate is ", success_rate * 100)
 
 
-def attack(data_loader: DataLoader, attack_model, blackbox_model, adver_dir, device: torch.device, attack_eval: bool):
+def attack(data_loader: DataLoader, attack_model, blackbox_models, adver_dir, device: torch.device, attack_eval: bool):
     
     flac_path = os.path.join(adver_dir, 'flac')
     os.makedirs(flac_path, exist_ok=True)
     print('is saving to path ', flac_path)
     # note the dir shoule be something like 
     # attack_result/toy_example_aasist_attack_ep100_bs24/adv_audio/flac
-
     torch.backends.cudnn.enabled = False
 
-    correct = 0
-    total_len = 0
+    # attack_iter_list = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50]
+    attack_iter_list = [1]
+
+
+    num_models = len(blackbox_models)
+    num_iter = len(attack_iter_list)
+
+    # if blackbox_models:
+    #     blackbox_model = blackbox_models[0]
+
+    # correct = [0] * num_models
+    # total_len = 1000
+    correct = torch.zeros(num_iter, num_models).to(device)
 
     for index, (origin, label, utt_id) in enumerate(data_loader):
         # print(torch.min(origin, dim=1))
@@ -194,36 +210,49 @@ def attack(data_loader: DataLoader, attack_model, blackbox_model, adver_dir, dev
         if os.path.exists(des_path):
             print('*' * 40, index, utt_id[0], 'Exists, SKip', '*' * 40)
         
-        adver_audio = attack_model.attack(origin, label)
-        adver_audio = adver_audio.clone()
+        adver_audio = origin.clone()
 
-        if attack_eval:
-            total_len += label.size()[0]
+        # attack_model.get_origin(origin)
+
+        for k, iter in enumerate(attack_iter_list):
             
-            _, out1 = blackbox_model(adver_audio)
-            pred1 = out1.argmax(1, keepdim=True).view(-1) # get the index of the max log-probability
-            correct += ((pred1 == label).sum())
+            # print(k)
+            # attack_model.change_max_iter(5)
 
-            # print(pred1)
-            # print(label)
+            adver_audio = attack_model.attack(adver_audio, label)
+            adver_audio = adver_audio.clone()
 
-            print("All the adversarial examples in the batch has been evaluated")
+            if attack_eval:
+                # total_len += label.size()[0]
+                
+                for i, model in enumerate(blackbox_models):
+                    _, out1 = model(adver_audio)
+                    pred1 = out1.argmax(1, keepdim=True).view(-1) # get the index of the max log-probability
+                    correct[k, i] += ((pred1 == label).sum())
 
-        else: 
+                print("All the adversarial examples in the batch has been evaluated")
 
-            for adv, id in zip(adver_audio, utt_id):
-                fs = 16000 # sampling rate of LA is 16k
-                adv_path = os.path.join(adver_dir, 'flac', id + '.pt') # test wav
-                adv = adv.cpu().detach()
-                #sf.write(adv_path, adv, samplerate=fs)
+            else: 
 
-                torch.save(adv, adv_path)
+                for adv, id in zip(adver_audio, utt_id):
+                    fs = 16000 # sampling rate of LA is 16k
+                    adv_path = os.path.join(adver_dir, 'flac', id + '.pt') # test wav
+                    adv = adv.cpu().detach()
+                    #sf.write(adv_path, adv, samplerate=fs)
 
-            print('All adversarial audio in the batch are saved!')
+                    torch.save(adv, adv_path)
+
+                print('All adversarial audio in the batch are saved!')
 
     if attack_eval:
-        success_rate = 1 - correct / float(total_len)
-        print("The success rate is:", success_rate * 100)
+        print(1000 - correct)
+        # for k, iter in enumerate(attack_iter_list):
+        #     for i in range(num_models):
+        #         success_rate = 1 - correct[k, i] / 1000.0
+        #         print("num iter: ", iter)
+        #         print("model: ", i)
+        #         print("The success rate is:", success_rate * 100)
+
 
 def get_adv_loader(
         database_path: str,
