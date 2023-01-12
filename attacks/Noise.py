@@ -3,9 +3,12 @@
 # 1. install speechbrain
 # 2. 定位speechbrain的源码，把lobes/features.py和lobes/augment.py中的torch.no_grad()删掉
 
-class NOISE(nn.Module):
+import torch.nn as nn
+import torch
+from speechbrain.processing.speech_augmentation import AddNoise
 
-    # def __init__(self, csv_file=None, sorting="random", snr_low=15, snr_high=15, pad=False) -> None:
+class NOISE(nn.Module):
+    
     def __init__(self, csv_file=None, sorting="random", snr_low=0, snr_high=5, pad=False) -> None:
         super().__init__()
 
