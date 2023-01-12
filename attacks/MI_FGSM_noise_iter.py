@@ -5,11 +5,14 @@ import torch.nn.functional as F
 
 from attacks.loss import get_loss_fn
 from attacks.MI_FGSM_ensemble import MI_FGSM_ensemble
+from attacks.Noise import NOISE
 
-class MI_FGSM_ensemble_iter(MI_FGSM_ensemble):
+
+class MI_FGSM_noise_iter(MI_FGSM_ensemble):
     def __init__(self, models, attack_config) -> None:
         
         super().__init__(models, attack_config)
+        self.noise = NOISE()
 
     def attack(self, x, y):
 
@@ -31,6 +34,7 @@ class MI_FGSM_ensemble_iter(MI_FGSM_ensemble):
                 model.eval()
                 adv_x.requires_grad = True
 
+                adv_x = self.noise(adv_x)
                 _, out = model(adv_x)
             
                 loss = self.loss_fn(out, y)

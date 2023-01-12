@@ -5,6 +5,7 @@ import torch.nn.functional as F
 
 from attacks.loss import get_loss_fn
 
+
 class MI_FGSM_ensemble():
     def __init__(self, models, attack_config) -> None:
         
@@ -20,6 +21,23 @@ class MI_FGSM_ensemble():
         self.mu = attack_config['decay_factor']
         self.device = "cuda"
 
+    def attack_method(self, adv_x, x, loss, g):
+        data_grad = torch.autograd.grad(loss, adv_x,
+                                    retain_graph=False, create_graph=False)[0]
+
+
+        g = self.mu * g + nn.functional.normalize(data_grad, p=1)
+
+        # Create the adversarial audio
+        adv_x = adv_x.detach() + self.alpha * g.sign() 
+
+        delta = torch.clamp(adv_x - x, min=-self.epsilon, max=self.epsilon)
+
+        # we need to clamp the data in (-1, 1)
+        adv_x = torch.clamp(x + delta, min=-(1-2**(-15)), max=1-2**(-15)).detach()
+        return g, adv_x
+
+
     def attack(self, x, y):
 
         x = x.clone() # avoid influencing
@@ -34,7 +52,7 @@ class MI_FGSM_ensemble():
         adv_x = x.clone().detach()
 
         for t in range(self.max_iter):
-            # print(t)
+
             adv_x.requires_grad = True
 
             out_list = []
@@ -50,23 +68,6 @@ class MI_FGSM_ensemble():
 
             loss = self.loss_fn(out_mean, y)
 
-            # print(loss.size())
-
-            # Calculate gradients of model in backward pass
-            
-            # Collect datagrad
-            data_grad = torch.autograd.grad(loss, adv_x,
-                                       retain_graph=False, create_graph=False)[0]
-
-
-            g = self.mu * g + nn.functional.normalize(data_grad, p=1)
-
-            # Create the adversarial audio
-            adv_x = adv_x.detach() + self.alpha * g.sign() 
-
-            delta = torch.clamp(adv_x - x, min=-self.epsilon, max=self.epsilon)
-
-            # we need to clamp the data in (-1, 1)
-            adv_x = torch.clamp(x + delta, min=-(1-2**(-15)), max=1-2**(-15)).detach()
+            g, adv_x = self.attack_method(adv_x, x, loss, g)
 
         return adv_x

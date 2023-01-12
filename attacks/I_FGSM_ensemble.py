@@ -18,6 +18,20 @@ class I_FGSM_ensemble():
         self.alpha = self.epsilon / 5 # step size
         self.device = "cuda"
 
+    # returns delta
+    def attack_method(self, adv_x, x, loss):
+        data_grad = torch.autograd.grad(loss, adv_x,
+                        retain_graph=False, create_graph=False)[0]
+
+        # x.grad.zero_()
+        # Create the adversarial audio
+        adv_x = adv_x.detach() + self.alpha * data_grad.sign()
+
+        # we need to clamp the data in (-1, 1)
+        delta = torch.clamp(adv_x - x, min=-self.epsilon, max=self.epsilon)
+        adv_x = torch.clamp(x + delta, min=-(1-2**(-15)), max=1-2**(-15)).detach()
+        return adv_x
+    
     def attack(self, x, y):
 
         x = x.clone() # avoid influencing
@@ -58,21 +72,7 @@ class I_FGSM_ensemble():
                 loss_list.append(loss_x)
             
             loss = torch.mean( torch.stack(loss_list))
-
-            # self.model.zero_grad()
-            # Calculate gradients of model in backward pass
-            # loss.backward()
             
-            # Collect datagrad
-            data_grad = torch.autograd.grad(loss, adv_x,
-                                       retain_graph=False, create_graph=False)[0]
-
-            # x.grad.zero_()
-            # Create the adversarial audio
-            adv_x = adv_x.detach() + self.alpha * data_grad.sign()
-
-            # we need to clamp the data in (-1, 1)
-            delta = torch.clamp(adv_x - x, min=-self.epsilon, max=self.epsilon)
-            adv_x = torch.clamp(x + delta, min=-(1-2**(-15)), max=1-2**(-15)).detach()
+            adv_x = self.attack_method(adv_x, x, loss)
 
         return adv_x
