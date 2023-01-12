@@ -4,52 +4,60 @@ import torch
 import torch.nn.functional as F
 
 from attacks.loss import get_loss_fn
-from attacks.Iter_ensemble import Iter_ensemble
 
-class MI_FGSM_ensemble_iter(Iter_ensemble):
-    def __init__(self, models, attack_config):
-        super().__init__(models, attack_config)
+class MI_FGSM_ensemble_iter():
+    def __init__(self, models, attack_config) -> None:
         
+        self.loss_fn = get_loss_fn( attack_config['loss'] )
+        self.epsilon = attack_config['epsilon']
+
+        self.models = models
+        self.num_models = len(models)
+
+        self.max_iter = attack_config['max_iter']
+        self.alpha = attack_config['alpha']
+
         self.mu = attack_config['decay_factor']
-
-    def attack_method(self, delta, y, model):
-        delta.requires_grad = True
-
-        model.eval()
-        _, out = model(delta)
-
-        loss = self.loss_fn(out, y)
-
-        data_grad = torch.autograd.grad(loss, delta,
-                                    retain_graph=False, create_graph=False)[0]
-
-        # x.grad.zero_()
-        # Create the adversarial audio
-
-        self.g = self.mu * self.g + nn.functional.normalize(data_grad)
-
-        delta = delta.detach() + self.alpha * self.g.sign()
-
-        delta = torch.clamp(delta, min=-self.epsilon, max=self.epsilon) 
-
-        return delta
+        self.device = "cuda"
 
     def attack(self, x, y):
- 
+
+        x = x.clone() # avoid influencing
+        # x.requires_grad = True
+
+        # x.requires_grad = True
+
         x = x.clone().detach().to(self.device)
         y = y.clone().detach().to(self.device)
 
-        delta = (torch.rand_like(x).to(self.device) - 0.5) * 2 * self.epsilon
-        delta.requires_grad = True
-
-        self.g = torch.zeros_like(x).to(self.device)
+        g = torch.zeros_like(x).to(self.device)
+        adv_x = x.clone().detach()
 
         for t in range(self.max_iter):
+            # print(t)
 
             for model in self.models:
+                model.eval()
+                adv_x.requires_grad = True
 
-                delta = self.attack_method(delta, y, model)
+                _, out = model(adv_x)
+            
+                loss = self.loss_fn(out, y)
 
-        adv_x = torch.clamp(x + delta, min=-(1-2**(-15)), max=1-2**(-15)).detach()
+                # Calculate gradients of model in backward pass
+                
+                # Collect datagrad
+                data_grad = torch.autograd.grad(loss, adv_x,
+                                        retain_graph=False, create_graph=False)[0]
+
+                g = self.mu * g + nn.functional.normalize(data_grad, p=1)
+
+                # Create the adversarial audio
+                adv_x = adv_x.detach() + self.alpha * g.sign() 
+
+                delta = torch.clamp(adv_x - x, min=-self.epsilon, max=self.epsilon)
+
+                # we need to clamp the data in (-1, 1)
+                adv_x = torch.clamp(x + delta, min=-(1-2**(-15)), max=1-2**(-15)).detach()
 
         return adv_x
