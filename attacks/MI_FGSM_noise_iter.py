@@ -36,15 +36,17 @@ class MI_FGSM_noise_iter(MI_FGSM_ensemble):
                 adv_x.requires_grad = True
 
                 # out_list = []
-                out = torch.zeros([y.size()[0], 2], device=self.device)
+                loss = torch.zeros([1], device=self.device)
                 for s in range(self.noise_avg):
                     adv_x_noise = self.noise(adv_x)
                     _, temp_out = model(adv_x_noise)
-                    out = out + temp_out 
-                
-                out = out / self.noise_avg
-                loss = self.loss_fn(out, y)
+                    temp_loss = self.loss_fn(temp_out, y)
+                    # print(temp_loss)
+                    loss = loss + temp_loss
 
+                loss = loss / self.noise_avg
+
+                # print(loss)
                 g, adv_x = self.attack_method(adv_x, x, loss, g)
 
         return adv_x
