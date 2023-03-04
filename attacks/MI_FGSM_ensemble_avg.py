@@ -54,8 +54,8 @@ class MI_FGSM_ensemble_avg():
                 # out_list.append(out)
                 loss_i = self.loss_fn(out, y)
                 grad_i = torch.autograd.grad(loss_i, adv_x, retain_graph=False, create_graph=False)[0]
-                all_grads_max.append(grad_i.max().item())
-                al_loss.append(loss_i.item())
+                all_grads_max.append(round(grad_i.max().item(), 3))
+                al_loss.append(round(loss_i.item(), 3))
                 
                 with torch.no_grad():
 
@@ -77,8 +77,8 @@ class MI_FGSM_ensemble_avg():
                     else:
                         data_grad += grad_i
                     
-                    all_grads_max_norm.append(grad_i.max().item()) 
-                    al_loss_norm.append(loss_i.item())
+                    all_grads_max_norm.append(round(grad_i.max().item(), 3)) 
+                    al_loss_norm.append(round(loss_i.item(), 3))
                   
                 
             g = self.mu * g + nn.functional.normalize(data_grad, p=1)
