@@ -55,7 +55,7 @@ class MI_FGSM_ensemble_avg():
                 loss_i = self.loss_fn(out, y)
                 grad_i = torch.autograd.grad(loss_i, adv_x, retain_graph=False, create_graph=False)[0]
                 all_grads_max.append(grad_i.max().item())
-                al_loss.append(loss_i.item())
+                all_loss.append(loss_i.item())
                 
                 with torch.no_grad():
 
@@ -77,10 +77,9 @@ class MI_FGSM_ensemble_avg():
                     else:
                         data_grad += grad_i
                     
-                    all_grads_max_norm.append(grad_i.max().item()) 
-                    al_loss_norm.append(loss_i.item())
-                  
-                
+                    all_grads_norm_max.append(grad_i.max().item()) 
+                    all_loss_norm.append(loss_i.item())
+                     
             g = self.mu * g + nn.functional.normalize(data_grad, p=1)
 
             # Create the adversarial audio
