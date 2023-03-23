@@ -27,7 +27,8 @@ def get_loss_fn(loss_fn_name):
     elif loss_fn_name == 'Logits':
         
         def logitLoss(x, y):
-            return sum(x[:,1])
+#             return sum(x[:,1])
+            return -mean(x[:,0])
         
         return logitLoss
     else:
