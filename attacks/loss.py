@@ -12,7 +12,23 @@ def get_loss_fn(loss_fn_name):
 
 
     if loss_fn_name == 'CrossEntropy':
-        weight = torch.FloatTensor([0.1, 0.9]).to(device)
-        return nn.CrossEntropyLoss(weight=weight)
+        # weight = torch.FloatTensor([0.1, 0.9]).to(device)
+        return nn.CrossEntropyLoss()
+    elif loss_fn_name == 'BCE':
+        
+        def binaryCE(x, y):
+            BCE = nn.BCELoss()
+            m = nn.Sigmoid()
+            
+            return BCE(m(x[:,1]), y.float())
+        
+        return binaryCE
+        
+    elif loss_fn_name == 'Logits':
+        
+        def logitLoss(x, y):
+            return sum(x[:,1])
+        
+        return logitLoss
     else:
         raise "No such loss function"
