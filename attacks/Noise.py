@@ -44,3 +44,45 @@ class NOISE(nn.Module):
         length = length if length is not None else \
         torch.tensor([1.0] * audios.shape[0], device=audios.device, dtype=torch.long)
         audios = audios.squeeze(1)
+
+        
+class FM(nn.Module): # random; EOT friendly
+
+    # def __init__(self, freq_mask_width=(0, 20), n_freq_mask=2) -> None:
+    # def __init__(self, freq_mask_width=(0, 5), n_freq_mask=2) -> None:
+    def __init__(self, freq_mask_width=(0, 7), n_freq_mask=2) -> None:
+        super().__init__()
+
+        time_warp = False
+        freq_mask = True
+        # freq_mask_width = param[0]
+        # n_freq_mask = param[1]
+        time_mask = False
+        replace_with_zero = True
+
+        self.spec_aug = SpecAugment(time_warp=time_warp, freq_mask=freq_mask, freq_mask_width=freq_mask_width,
+                                n_freq_mask=n_freq_mask, time_mask=time_mask, replace_with_zero=replace_with_zero)
+    
+    def forward(self, feat):
+        return self.spec_aug(feat)
+
+
+class TM(nn.Module): # random; EOT friendly
+
+    # def __init__(self, time_mask_width=(0, 100), n_time_mask=2) -> None:
+    def __init__(self, time_mask_width=(0, 90), n_time_mask=2) -> None:
+        super().__init__()
+
+        time_warp = False
+        freq_mask = False
+        time_mask = True
+        # time_mask_width = param[0]
+        # n_time_mask = param[1]
+        replace_with_zero = True
+
+        self.spec_aug = SpecAugment(time_warp=time_warp, freq_mask=freq_mask, 
+                                time_mask=time_mask, time_mask_width=time_mask_width, n_time_mask=n_time_mask,
+                                replace_with_zero=replace_with_zero)
+    
+    def forward(self, feat):
+        return self.spec_aug(feat)
